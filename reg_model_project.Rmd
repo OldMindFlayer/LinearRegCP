@@ -1,0 +1,198 @@
+---
+title: "Modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(statsr)
+library(GGally)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+movies_data_full <- as_tibble(movies)
+```
+
+* * *
+
+## Part 1: Data
+The data set is comprised of 651 randomly sampled movies produced and released before 2016.
+Since random sampling was used, data can be generalized to the population.
+The was no random assignment in this study, so we can't determine causal relationships between variables, only association between them.
+
+* * *
+
+## Part 2: Research question
+1. Are the relationships between three score methods (imdb rating, critics score and audience score) linear, and if so, which one has highest correlation coefficients with other two methods? 
+Scores are not a film attributes and we can expect collinearity between them, so we will not use them as a predictors. In our model we have to choose one score as response variable, and this score should have high association with other scores.  
+
+2. Which variables should we choose in order to construct multiple linear regression model for prediction of movie popularity?  
+It's important to find the most impactful predictors for the movie success.
+
+3. What score and uncertainty around it our model predict for the movie "Warcraft"?  
+Fun movie, fun model, let's predict score and compare it to the real one.
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+To answer first question, let's first select scoring variables. "Imdb rating" goes from 0 to 10, while "critics score" and "audience score" from 0 to 100, so for comparison, let's adjust Imdb score. Then, let's check mean and variance them.
+```{r}
+movies_scores <- movies_data_full %>%
+    select(imdb_rating = imdb_rating, critics_score, audience_score) %>%
+    mutate(imdb_rating = imdb_rating*10)
+apply(movies_scores, 2, mean)
+apply(movies_scores, 2, var)
+```
+"Imdb rating" has much lower variance compared to other two, but higher mean. On the other hand, "critics score" has very high variance. We can take a look at the relationships between all scoring variables using ggpairs() function:
+
+```{r}
+ggpairs(movies_scores[,c("imdb_rating", "critics_score", "audience_score")])
+```
+First, imdb_rating distribustion looks nearly normal, while other two are extimely right skewed: critics_score at the first half of the plot looks close to unimodal, and audience_score has additional peak around 50-th score. The sample size is high and it probably will not affect our inference, but still it is important to keep in mind the distributions shapes.  
+Second, relationships between all 3 variables are close to linear, while it can be violated if rating is below 50.  
+Third, the two highest correlation coefficients are between imdb rating and other scores. This is main reason why I suggest choosing "imdb_rating" as a response variable in our model.
+
+* * *
+
+## Part 4: Modeling
+
+We need to chose initial set of predictor variables from 31 available. First, lets remove from the set categorical variables (character or factor), that have more then 5 levels (e.g. "title"), as they are already taken into account in other variables, or have too much levels compere to the sample size.
+```{r}
+col_selection <- function (col_name) {
+    is.numeric(movies_data_full[[col_name]]) ||
+    ((is.character(movies_data_full[[col_name]]) ||
+    is.factor(movies_data_full[[col_name]])) && 
+    length(unique(movies_data_full[[col_name]])) <= 5)
+}
+column_names <- names(movies_data_full)
+movies_data_selected <- movies_data_full[,vapply(column_names, col_selection, logical(1))]
+```
+Next, let's eliminated from the set score variables and variables, related to them, as they are not movie parameters.
+```{r}
+movies_data_selected <- select(movies_data_selected, -c("imdb_num_votes", "critics_rating", "critics_score",
+                                                        "audience_rating", "audience_score"))
+```
+Other candidate variables are month and dates of movie released in theaters or on DVD, and month variables we can mutate into categorical: was released during "cold" or "warm" month in northern hemisphere, day wariables: at what part of month movie was released (<11, 11-20, >20). Also, let's remove missing values.
+```{r}
+movies_data_selected <- movies_data_selected %>%
+    mutate(thtr_rel_month = cut(thtr_rel_month, breaks = c(0, 3, 9, 12), labels = c("cold", "warm", "cold")),
+           dvd_rel_month = cut(dvd_rel_month, breaks = c(0, 3, 9, 12), labels = c("cold", "warm", "cold")),
+           thtr_rel_day = cut(thtr_rel_day, breaks = c(0, 10, 20, 31), labels = c("first", "second", "third")),
+           dvd_rel_day = cut(dvd_rel_day, breaks = c(0, 10, 20, 31), labels = c("first", "second", "third")))
+movies_data_selected <- movies_data_selected[complete.cases(movies_data_selected),]
+```
+
+Now let's construct the full multiple linear regression model with "imdb_rating" as a responce variable and others as explanatory variables.
+```{r}
+fit_lm <- function (movie_df) {
+    selected_names <- names(movie_df)
+    selected_names <- selected_names[!(selected_names == "imdb_rating")]
+    formula_1 <- paste("imdb_rating", paste(selected_names, collapse = " + "), sep = " ~ ")
+    fit <- lm(formula = formula_1, data = movie_df)
+    fit
+}
+
+fit <- fit_lm(movies_data_selected)
+summary(fit)
+```
+As we want the better predictions from the model, it may be appropriate to use method, which based on maximising r^2. For this I've used backward elimination adjusted R^2 method:
+```{r}
+backwards_model_selection_r2_main <- function (movies_df, r2) {
+    best_names <- NULL
+    iter_names <- names(movies_df)[!(names(movies_df) == "imdb_rating")]
+    for (variable in iter_names) {
+        selected_names <- names(movies_df)
+        reduced_names <- selected_names[!(selected_names == variable)]
+        selected_names <- reduced_names[!(reduced_names == "imdb_rating")]
+        formula_n <- paste("imdb_rating", paste(selected_names, collapse = " + "), sep = " ~ ")
+        fit <- lm(formula = formula_n, data = movies_df)
+        if (summary(fit)$adj.r.squared > r2) {
+            r2 <- summary(fit)$adj.r.squared
+            best_names <- reduced_names
+        }
+    }
+    if (is.null(best_names)) {
+        list(movies_df, r2)
+    } else {
+        new_df <- list(movies_df[,best_names], r2)
+        new_df
+    }
+}
+
+recursive_r2 <- function (movies_df, r2) {
+    new_df <- backwards_model_selection_r2_main(movies_df, r2)
+    if (length(movies_df) == length(new_df[[1]])) {
+        movies_df
+    } else {
+        recursive_r2(new_df[[1]], new_df[[2]])
+    }
+}
+
+r2 <- summary(fit)$adj.r.squared
+simpl_movies <- recursive_r2(movies_data_selected, r2)
+fit2 <- fit_lm(simpl_movies)
+summary(fit2)
+# I just wanted to write some code... and carried away...
+```
+In this model 7 exploratory variable are used. Now we will make model diagnostics.  
+```{r}
+plot(fit2$residuals ~ movies_data_selected$runtime)
+plot(fit2$residuals ~ movies_data_selected$dvd_rel_year)
+hist(fit2$residuals)
+plot(abs(fit2$residuals) ~ fit2$fitted)
+```
+
+On the plots of residuals against runtime and dvd_rel_year we can see random scatters (so relationships between numerical exploratory variables and responce variable are linear), on histogram the plot is nearly normal, but variability of the residuals for low and high value of predicted variable is different. Data was obtain by random sempling, so we assume, that the residuales are independent from each other.  
+
+Model coefficients may be interpreted this way:  
+* All else held constant, for each minute increase in runtime the model predicts the imdb rating to be higher on average by 0.0134 units.  
+* All else held constant, for each year increase in movie release on DVD date the model predicts the imdb rating to be lower on average by 0.0147 units.  
+* All else held constant, the model predicts that movie of type "Feature Film" has imdb rating 1.514 lower and movie of type "TV Movie" has imdb rating 1.714 lower than movie of type "Documentary", on average.  
+* All else held constant, the model predicts that movie, which DVD release was during warm months in the northen hemosphere, has imdb rating 0.116 lower than movie, which DVD release was during cold months in the northen hemosphere, on average.  
+* All else held constant, the model predicts that movie, which was nominated for a best picture Oscar, has imdb rating 0.932 higher than movie, which was not nominated for a best picture Oscar, on average.  
+* All else held constant, the model predicts that movie, whose director did ever win an Oscar, has imdb rating 0.302 higher than movie, whose director did not ever win an Oscar, on average.  
+* All else held constant, the model predicts that movie, which is in the Top 200 Box Office list on BoxOfficeMojo, has imdb rating 0.415 higher than movie, which is not in the Top 200 Box Office list on BoxOfficeMojo, on average.  
+
+* * *
+
+## Part 5: Prediction
+
+Now, let's pedict imdb rating for a movie "Warcraft". Data for this movie come from two websites: imdb.com and kinopoisk.ru.
+```{r}
+warcraft  <- tibble(
+    title_type = "Feature Film",
+    runtime = 123,
+    dvd_rel_year = 2016,
+    dvd_rel_month = "warm",
+    imdb_rating = 6.9,
+    best_pic_nom = "no",
+    best_dir_win = "no",
+    top200_box = "no"
+)
+warcraft_predict <- predict(fit2, warcraft, interval="predict", level = 0.95)
+paste0("Predicted IMDB rating: ", round(warcraft_predict[[1]], digits = 4))
+paste0("Prediction interval: lower ", round(warcraft_predict[2], digits = 4), ", upper ", 
+       round(warcraft_predict[3], digits = 4))
+```
+The model predicts, with 95% confidence, that a movie of type "Feature Film", with runtime 123 minutes, released on DVD in 2016 during warm months in northen hemosphere, which was not nominated for a best picture Oscar, it's director didn't ever win an Oscar, and is not in the Top 200 Box Office list on BoxOfficeMojo, is expected to have an imdb rating between 4.455 and 8.183.
+
+* * *
+
+## Part 6: Conclusion
+In this study, we used dataset of 651 randomly sampled movies to choose appropriate scoring method, construct prediction model and use it for prediction. As response variable for the model the imdb rating has been choosen, since it's values in our sample is less skewed and better correlated with other scores values. We eliminate 17 variables before construction of full MLR model and with beckward elimination in order to maximize R^2 we came to the model, where 7 prediction variables predict imdb raiting with R^2 = 0.2321.  
+
+One of the model shortcomings is that some prediction variables in model has revetively high p-values, and their contribution to the model may occure simply by chance. Model is not very parsimonious. The prediction interval for real movie appear to be revatively wide.
