@@ -86,15 +86,25 @@ Next, let's eliminated from the set score variables and variables, related to th
 movies_data_selected <- select(movies_data_selected, -c("imdb_num_votes", "critics_rating", "critics_score",
                                                         "audience_rating", "audience_score"))
 ```
-Other candidate variables are month and dates of movie released in theaters or on DVD, and month variables we can mutate into categorical: was released during "cold" or "warm" month in northern hemisphere, day wariables: at what part of month movie was released (<11, 11-20, >20). Also, let's remove missing values.
+Also let's eliminate variables, related to the month and dates of movie released in theaters or on DVD, as it's actully ordered categorical variable with many levels (12 and 31).
+
 ```{r}
-movies_data_selected <- movies_data_selected %>%
-    mutate(thtr_rel_month = cut(thtr_rel_month, breaks = c(0, 3, 9, 12), labels = c("cold", "warm", "cold")),
-           dvd_rel_month = cut(dvd_rel_month, breaks = c(0, 3, 9, 12), labels = c("cold", "warm", "cold")),
-           thtr_rel_day = cut(thtr_rel_day, breaks = c(0, 10, 20, 31), labels = c("first", "second", "third")),
-           dvd_rel_day = cut(dvd_rel_day, breaks = c(0, 10, 20, 31), labels = c("first", "second", "third")))
+movies_data_selected <- select(movies_data_selected, -c("thtr_rel_month", "dvd_rel_month", "thtr_rel_day",
+                                                        "dvd_rel_day"))
 movies_data_selected <- movies_data_selected[complete.cases(movies_data_selected),]
+names(movies_data_selected)
 ```
+For the full model I'm considering variables:  
+"title_type" - Type of movie (Documentary, Feature Film, TV Movie)  
+"runtime" - Runtime of movie (in minutes)  
+"thtr_rel_year" - Year the movie is released in theaters  
+"dvd_rel_year" - Year the movie is released on DVD  
+"best_pic_nom" - Whether or not the movie was nominated for a best picture Oscar (no, yes)  
+"best_pic_win" - Whether or not the movie won a best picture Oscar (no, yes)  
+"best_actor_win" - Whether or not one of the main actors in the movie ever won an Oscar (no, yes) – note that this is not necessarily whether the actor won an Oscar for their role in the given movie  
+"best_actress_win" - Whether or not one of the main actresses in the movie ever won an Oscar (no, yes) – not that this is not necessarily whether the actresses won an Oscar for their role in the given movie  
+"best_dir_win" - Whether or not the director of the movie ever won an Oscar (no, yes) – not that this is not necessarily whether the director won an Oscar for the given movie  
+"top200_box" - Whether or not the movie is in the Top 200 Box Office list on BoxOfficeMojo (no, yes)  
 
 Now let's construct the full multiple linear regression model with "imdb_rating" as a responce variable and others as explanatory variables.
 ```{r}
@@ -148,7 +158,7 @@ fit2 <- fit_lm(simpl_movies)
 summary(fit2)
 # I just wanted to write some code... and carried away...
 ```
-In this model 7 exploratory variable are used. Now we will make model diagnostics.  
+In this model 6 exploratory variable are used. Now we will make model diagnostics.  
 ```{r}
 plot(fit2$residuals ~ movies_data_selected$runtime)
 plot(fit2$residuals ~ movies_data_selected$dvd_rel_year)
@@ -156,16 +166,15 @@ hist(fit2$residuals)
 plot(abs(fit2$residuals) ~ fit2$fitted)
 ```
 
-On the plots of residuals against runtime and dvd_rel_year we can see random scatters (so relationships between numerical exploratory variables and responce variable are linear), on histogram the plot is nearly normal, but variability of the residuals for low and high value of predicted variable is different. Data was obtain by random sempling, so we assume, that the residuales are independent from each other.  
+On the plots of residuals against runtime and dvd_rel_year we can see random scatters (so relationships between numerical exploratory variables and responce variable are linear), on histogram the plot is nearly normal, but variability of the residuals for low and high value of predicted variable is different. Data was obtain by random sampling, so we assume, that the residuales are independent from each other.  
 
 Model coefficients may be interpreted this way:  
-* All else held constant, for each minute increase in runtime the model predicts the imdb rating to be higher on average by 0.0134 units.  
-* All else held constant, for each year increase in movie release on DVD date the model predicts the imdb rating to be lower on average by 0.0147 units.  
-* All else held constant, the model predicts that movie of type "Feature Film" has imdb rating 1.514 lower and movie of type "TV Movie" has imdb rating 1.714 lower than movie of type "Documentary", on average.  
-* All else held constant, the model predicts that movie, which DVD release was during warm months in the northen hemosphere, has imdb rating 0.116 lower than movie, which DVD release was during cold months in the northen hemosphere, on average.  
-* All else held constant, the model predicts that movie, which was nominated for a best picture Oscar, has imdb rating 0.932 higher than movie, which was not nominated for a best picture Oscar, on average.  
-* All else held constant, the model predicts that movie, whose director did ever win an Oscar, has imdb rating 0.302 higher than movie, whose director did not ever win an Oscar, on average.  
-* All else held constant, the model predicts that movie, which is in the Top 200 Box Office list on BoxOfficeMojo, has imdb rating 0.415 higher than movie, which is not in the Top 200 Box Office list on BoxOfficeMojo, on average.  
+* All else held constant, for each minute increase in runtime the model predicts the imdb rating to be higher on average by 0.013 units.  
+* All else held constant, for each year increase in movie release on DVD date the model predicts the imdb rating to be lower on average by 0.013 units.  
+* All else held constant, the model predicts that movie of type "Feature Film" has imdb rating 1.498 lower and movie of type "TV Movie" has imdb rating 1.731 lower than movie of type "Documentary", on average.  
+* All else held constant, the model predicts that movie, which was nominated for a best picture Oscar, has imdb rating 0.937 higher than movie, which was not nominated for a best picture Oscar, on average.  
+* All else held constant, the model predicts that movie, whose director did ever win an Oscar, has imdb rating 0.311 higher than movie, whose director did not ever win an Oscar, on average.  
+* All else held constant, the model predicts that movie, which is in the Top 200 Box Office list on BoxOfficeMojo, has imdb rating 0.412 higher than movie, which is not in the Top 200 Box Office list on BoxOfficeMojo, on average.  
 
 * * *
 
@@ -177,7 +186,6 @@ warcraft  <- tibble(
     title_type = "Feature Film",
     runtime = 123,
     dvd_rel_year = 2016,
-    dvd_rel_month = "warm",
     imdb_rating = 6.9,
     best_pic_nom = "no",
     best_dir_win = "no",
@@ -188,11 +196,14 @@ paste0("Predicted IMDB rating: ", round(warcraft_predict[[1]], digits = 4))
 paste0("Prediction interval: lower ", round(warcraft_predict[2], digits = 4), ", upper ", 
        round(warcraft_predict[3], digits = 4))
 ```
-The model predicts, with 95% confidence, that a movie of type "Feature Film", with runtime 123 minutes, released on DVD in 2016 during warm months in northen hemosphere, which was not nominated for a best picture Oscar, it's director didn't ever win an Oscar, and is not in the Top 200 Box Office list on BoxOfficeMojo, is expected to have an imdb rating between 4.455 and 8.183.
+The model predicts, with 95% confidence, that a movie of type "Feature Film", with runtime 123 minutes, released on DVD in 2016 during warm months in northen hemosphere, which was not nominated for a best picture Oscar, it's director didn't ever win an Oscar, and is not in the Top 200 Box Office list on BoxOfficeMojo, is expected to have an imdb rating between 4.526 and 8.255.
 
 * * *
 
 ## Part 6: Conclusion
-In this study, we used dataset of 651 randomly sampled movies to choose appropriate scoring method, construct prediction model and use it for prediction. As response variable for the model the imdb rating has been choosen, since it's values in our sample is less skewed and better correlated with other scores values. We eliminate 17 variables before construction of full MLR model and with beckward elimination in order to maximize R^2 we came to the model, where 7 prediction variables predict imdb raiting with R^2 = 0.2321.  
+In this study, we used dataset of 651 randomly sampled movies to choose appropriate scoring method, construct prediction model and use it for prediction.  
+The full model for prediction Imdb rating contained 10 prediction variables with adjusted R-squared = 0.2259.  
+After backward elimination we came to the model, where 6 prediction variables predict imdb raiting with adjusted R-squared = 0.2304.  
+Low R-squared value doesn't allow to say, tha the model will make accurate predictions.  
 
 One of the model shortcomings is that some prediction variables in model has revetively high p-values, and their contribution to the model may occure simply by chance. Model is not very parsimonious. The prediction interval for real movie appear to be revatively wide.
